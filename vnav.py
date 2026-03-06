@@ -82,22 +82,20 @@ class FlightPlan:
             print(f"Initializing test flight plan with {len(self)} predefined waypoints and cruise altitude {self.cruise_altitude} ft and cruise speed {self.cruise_speed} kts.\n")
             self.print_wps()
         else:
+            self.wps = []
             self.enter_cruise_altitude()
             self.enter_cruise_speed()
-            self.wps = []
+            self.enter_wps()           
 
-            cont = 'y'
-            while cont.lower() == 'y':
-                self.enter_wps()
-                self.print_wps()
-                cont = input("Do you want to add more wps? (y/n): ")
-    
+        self.num_tests = 0 # Number of constraint checks performed when computing the descent profile.
         self.update_cumulative_distances()
         self.clean_constraints()
-        self.compute_profile()
+        self.compute_profile(len(self))
         self.compute_TOD()
         self.compute_vertical_speeds()
         self.print_descent_profile()
+        
+        #print(f"Total number of constraint checks: {self.num_tests}\n")
     
     def __len__(self):
         # Return the number of waypoints in the flight plan.
@@ -113,7 +111,7 @@ class FlightPlan:
                 print("Cruise altitude is required. Please enter a valid altitude.")
             else:
                 self.cruise_altitude = int(cruise_altitude)
-                print(f"Cruise altitude set to {self.cruise_altitude} ft.")
+                print(f"Cruise altitude set to {self.cruise_altitude} ft.\n")
                 return
             
     def enter_cruise_speed(self):
@@ -126,22 +124,23 @@ class FlightPlan:
                 print("Cruise speed is required. Please enter a valid speed.")
             else:
                 self.cruise_speed = int(cruise_speed)
-                print(f"Cruise speed set to {self.cruise_speed} kts.")
+                print(f"Cruise speed set to {self.cruise_speed} kts.\n")
                 return
     
     def enter_wps(self):
         '''
         Take user inputs for flightplan wps.
         '''
-        print("\nLeg Entry: add waypoints in order, starting backwards from the destination.")
-        print("For example, if your flight plan is: ORIGIN -> WP1 -> WP2 -> DESTINATION, enter the waypoints in this order: DESTINATION, WP2, WP1, ORIGIN.")
-        print("*** A blank waypoint name will terminate flight plan entry.\n")
+        print("\n*** WAYPOINT ENTRY ***")
+        print("* Add waypoints in order, starting BACKWARDS from the final waypoint, typically the runway, FAF, or end of a STAR.")
+        print("* Example: If your flight plan is: WP1 -> WP2 -> WP3, enter the waypoints as: WP3, WP2, WP1.")
+        print("* A blank waypoint name will terminate flight plan entry.\n")
 
         while True:
             name = input("Waypoint Name: ")
             if not name: # A blank waypoint name indicates the end of flight plan entry.
                 print("Leg entry terminated.\n")
-                return
+                break
             else:
                 above = input(f"Cross {name} AT OR ABOVE (ft): ")
                 if not above:
@@ -169,6 +168,13 @@ class FlightPlan:
 
                 self.wps.append(WP(name, distance, above, below, speed))
             print("")
+        
+        self.print_wps()  
+        cont = input("Do you want to add more WPs? (y/n): ")
+        if cont.lower() == 'y':
+            self.enter_wps()
+        else:
+            return
 
     def print_wps(self):
         print("FLIGHT PLAN WAYPOINTS:")
@@ -199,18 +205,18 @@ class FlightPlan:
                 wp.below = 99999
                 wp.gen_constraint_str()
 
-    def compute_profile(self):
+    def compute_profile(self, stop):
         '''
         Compute the descent profile for the flight plan.
         '''
-        for i, wp in enumerate(self.wps):
-
+        for i, wp in enumerate(self.wps[:stop]):
             # Check if the descent path meets the constraints of the next wps.
-            for test_wp in self.wps[i+1:]:
+            for j, test_wp in enumerate(self.wps[i+1:], start=i+1):
                 if wp.grad_based_on > 0 and test_wp.cum_dis > wp.grad_based_on:
                     # If the wp already has a descent gradient constrained by an earlier waypoint, we do not need to keep checking aginst the next waypoint's constraints.
                     pass
                 else:
+                    self.num_tests+= 1
                      # Calculate crossing altitude for the next wp based on the descent gradient and distance to the next wp.
                     distance = test_wp.cum_dis - wp.cum_dis # Distance from current wp to next wp in nm                   
                     test_wp.crossing_altitude = wp.backcalc_altitude_at_distance(wp.crossing_altitude, distance)
@@ -239,7 +245,7 @@ class FlightPlan:
                         #print(f"New descent gradient for {wp.name} based on crossing {test_wp.name} at {test_wp.crossing_altitude} ft: {wp.gradient:.0f} ft/nm\n")
                         wp.grad_based_on = test_wp.cum_dis
 
-                        self.compute_profile()
+                        self.compute_profile(j) # Recheck the descent path against the previous waypoints to make sure the new descent gradient meets their constraints.
 
     def compute_TOD(self):
         '''
